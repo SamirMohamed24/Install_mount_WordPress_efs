@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Combined Demo with EC2 Instances, Auto Scaling, and Load Balancer
+
+Parameters:
+  LatestAmiId:
+    Description: Region-specific image from the Parameter Store
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to allow SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: "Must be the name of an existing EC2 KeyPair."
+
+Resources:
+  # Security Group for Load Balancer
+  LoadBalancerSecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP to the Load Balancer
+      VpcId: vpc-0281ff44254d30b0d  # Updated VPC ID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # Security Group for EC2 Instances
+  VMSecGrp:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH and HTTP to client hosts
+      VpcId: vpc-0281ff44254d30b0d  # Updated VPC ID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # Launch Template for ASG
+  LaunchTemplate:
+    Type: 'AWS::EC2::LaunchTemplate'
+    Properties:
+      LaunchTemplateName: !Sub '${AWS::StackName}-LaunchTemplate'
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: t2.micro
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !GetAtt VMSecGrp.GroupId
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            sudo dnf upgrade -y
+            sudo dnf install -y httpd wget php-fpm php-mysqli php-json php php-devel
+            sudo dnf install -y php-mbstring php-xml mariadb105-server
+            systemctl start httpd
+            systemctl enable httpd
+            sudo usermod -a -G apache ec2-user
+            sudo chown -R ec2-user:apache /var/www
+            sudo chmod 2775 /var/www && find /var/www -type d -exec sudo chmod 2775 {} \;
+            find /var/www -type f -exec sudo chmod 0664 {} \;
+            echo "<?php phpinfo(); ?>" > /var/www/html/phpinfo.php
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: "Name"
+                Value: "DemoLaunchTemplate"
+              - Key: "Environment"
+                Value: "Development"
+          - ResourceType: volume
+            Tags:
+              - Key: "Name"
+                Value: "DemoLaunchTemplateVolume"
+              - Key: "Environment"
+                Value: "Development"
+
+  # Auto Scaling Group
+  ASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MaxSize: '3'
+      MinSize: '1'
+      DesiredCapacity: '2'
+      VPCZoneIdentifier:
+        - subnet-097008bef419e6c64  # Updated subnet
+        - subnet-063f0a66cc67b830a  # Updated subnet
+      Tags:
+        - Key: "Name"
+          Value: "DemoASG3"
+          PropagateAtLaunch: true
+        - Key: "Environment"
+          Value: "Development"
+          PropagateAtLaunch: true
+
+  # Load Balancer
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: my-application-load-balancer
+      Subnets:
+        - subnet-097008bef419e6c64  # Updated subnet
+        - subnet-063f0a66cc67b830a  # Updated subnet
+      SecurityGroups:
+        - !Ref LoadBalancerSecGrp
+      Scheme: internet-facing  # Make it internet-facing
+
+  # Target Group
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: vpc-0281ff44254d30b0d  # Updated VPC ID
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: '80'
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: '200'
+
+  # Listener
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS name of the load balancer
+    Value: !GetAtt LoadBalancer.DNSName

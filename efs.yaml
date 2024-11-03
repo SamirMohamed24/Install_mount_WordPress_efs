@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudFormation template to create an EFS file system with mount targets in specified subnets."
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: "VPC ID for the EFS mount targets."
+
+  Subnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: "The first subnet for the EFS mount target."
+
+  Subnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: "The second subnet for the EFS mount target."
+
+  Subnet3:
+    Type: AWS::EC2::Subnet::Id
+    Description: "The third subnet for the EFS mount target."
+
+Resources:
+  # Create an EFS File System
+  MyEFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties: 
+      PerformanceMode: generalPurpose
+      Encrypted: true
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal: "*"
+            Action: "elasticfilesystem:*"
+            Resource: "*"
+
+  # Security group for EFS mount targets
+  MyEFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for EFS mount targets"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: sg-0d8619e600b015dbc  # Allow access from WordPress instance security group
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: sg-09276dc2dcd7f92a8  # Allow access from Auto Scaling Group security group
+
+  # Mount target in Subnet1
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MyEFSFileSystem
+      SubnetId: !Ref Subnet1
+      SecurityGroups:
+        - !Ref MyEFSSecurityGroup
+
+  # Mount target in Subnet2
+  MountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MyEFSFileSystem
+      SubnetId: !Ref Subnet2
+      SecurityGroups:
+        - !Ref MyEFSSecurityGroup
+
+  # IAM Role for EC2 instances to access EFS
+  EFSIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: "EFSPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "elasticfilesystem:DescribeMountTargets"
+                  - "elasticfilesystem:DescribeFileSystems"
+                  - "elasticfilesystem:CreateMountTarget"
+                  - "elasticfilesystem:DeleteMountTarget"
+                  - "elasticfilesystem:DescribeFileSystems"
+                Resource: "*"
+
+Outputs:
+  FileSystemId:
+    Description: "The ID of the EFS file system"
+    Value: !Ref MyEFSFileSystem
+
+  SecurityGroupId:
+    Description: "The security group ID for the EFS mount targets"
+    Value: !Ref MyEFSSecurityGroup
+
+  EFSRoleArn:
+    Description: "IAM Role ARN for EC2 instances to access EFS"
+    Value: !GetAtt EFSIAMRole.Arn

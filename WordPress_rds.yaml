@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates a robust, secure, and scalable hosting environment with WordPress and phpMyAdmin.
+
+Parameters:
+  MyName:
+    Type: String
+    Default: "Mr.db"
+    Description: Your name to display on the website.
+
+  DatabaseUsername:
+    Type: String
+    Default: "admin"
+    Description: The master username for the MariaDB instance.
+
+  DatabasePassword:
+    Type: String
+    NoEcho: true
+    Description: The master password for the MariaDB instance.
+
+  DatabaseName:
+    Type: String
+    Default: "wordpressdb"
+    Description: The name of the MariaDB database.
+
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: The VPC ID where the MariaDB instance will be deployed.
+
+Resources:
+  # Security Group for EC2 instance
+  WbInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Security group for WordPress instance
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  # Allow SSH from all IPs
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0  # Allow HTTP from all IPs
+
+  # EC2 Instance with security group and UserData script
+  WbInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-054a53dca63de757b  # Replace with your preferred AMI
+      InstanceType: t2.micro
+      KeyName: MyFirstKey  # Replace with your KeyPair
+      SecurityGroupIds:
+        - !Ref WbInstanceSecurityGroup
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo dnf upgrade -y
+          sudo dnf install -y httpd wget php-fpm php-mysqli php-json php php-devel php-mbstring php-xml mariadb105-server
+          sudo systemctl start httpd
+          sudo systemctl enable httpd
+          sudo usermod -a -G apache ec2-user
+
+          # Start and enable MariaDB
+          sudo systemctl start mariadb
+          sudo systemctl enable mariadb
+
+          # Set permissions for /var/www
+          sudo chown -R ec2-user:apache /var/www
+          sudo chmod 2775 /var/www && find /var/www -type d -exec sudo chmod 2775 {} \;
+          find /var/www -type f -exec sudo chmod 0664 {} \;
+
+          # Install phpMyAdmin
+          cd /var/www/html
+          wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.tar.gz
+          mkdir phpMyAdmin && tar -xvzf phpMyAdmin-latest-all-languages.tar.gz -C phpMyAdmin --strip-components 1
+          rm phpMyAdmin-latest-all-languages.tar.gz
+
+          # Download and configure WordPress
+          wget https://wordpress.org/latest.tar.gz
+          tar -xzf latest.tar.gz
+          rm latest.tar.gz
+
+          # Set up WordPress database
+          sudo mysql -u root <<EOF
+          CREATE USER 'wordpress-user'@'localhost' IDENTIFIED BY '${DatabasePassword}';
+          CREATE DATABASE \`${DatabaseName}\`;
+          GRANT ALL PRIVILEGES ON \`${DatabaseName}\`.* TO 'wordpress-user'@'localhost';
+          FLUSH PRIVILEGES;
+          EOF
+
+          # Configure wp-config.php
+          cp wordpress/wp-config-sample.php wordpress/wp-config.php
+          sed -i "s/database_name_here/${DatabaseName}/" wordpress/wp-config.php
+          sed -i "s/username_here/wordpress-user/" wordpress/wp-config.php
+          sed -i "s/password_here/${DatabasePassword}/" wordpress/wp-config.php
+
+          # Move WordPress files
+          mv wordpress/* /var/www/html/
+          sudo systemctl restart httpd
+          sudo systemctl restart php-fpm
+
+      Tags:
+        - Key: "Name"
+          Value: "wbinstance"
+        - Key: "Environment"
+          Value: "Development"
+
+  # MariaDB Security Group
+  MariaDBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for MariaDB instance
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0  # Adjust as needed for security
+
+  # MariaDB Instance
+  MariaDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: WPDBinstance1
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      Engine: mariadb
+      EngineVersion: 10.11.9
+      MasterUsername: !Ref DatabaseUsername
+      MasterUserPassword: !Ref DatabasePassword
+      DBName: !Ref DatabaseName
+      VPCSecurityGroups:
+        - !Ref MariaDBSecurityGroup
+      MultiAZ: false
+      BackupRetentionPeriod: 7
+      PubliclyAccessible: true
+
+Outputs:
+  WbInstancePublicIP:
+    Value: !GetAtt WbInstance.PublicIp
+    Description: The public IP address of the WordPress instance.
+
+  MariaDBEndpoint:
+    Value: !GetAtt MariaDBInstance.Endpoint.Address
+    Description: The endpoint of the MariaDB instance.
