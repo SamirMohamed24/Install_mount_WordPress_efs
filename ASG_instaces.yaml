@@ -13,7 +13,7 @@ Parameters:
     ConstraintDescription: "Must be the name of an existing EC2 KeyPair."
 
 Resources:
-  # Security Group for Load Balancer
+  # Create Security Group for Load Balancer
   LoadBalancerSecGrp:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -25,7 +25,7 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
 
-  # Security Group for EC2 Instances
+  # Create Security Group for EC2 Instances
   VMSecGrp:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -41,7 +41,7 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
 
-  # Launch Template for ASG
+  # Create Launch Template for ASG
   LaunchTemplate:
     Type: 'AWS::EC2::LaunchTemplate'
     Properties:
@@ -79,7 +79,7 @@ Resources:
               - Key: "Environment"
                 Value: "Development"
 
-  # Auto Scaling Group
+  # Create Auto Scaling Group
   ASG:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
@@ -92,9 +92,9 @@ Resources:
       VPCZoneIdentifier:
         - subnet-097008bef419e6c64  # Updated subnet
         - subnet-063f0a66cc67b830a  # Updated subnet
-      Tags:
-        - Key: "Name"
-          Value: "DemoASG3"
+      Tags: # Give autoscaling instance a name
+        - Key: "Name" # The name of the tag
+          Value: "DemoASG3" # The tag value you want to assign
           PropagateAtLaunch: true
         - Key: "Environment"
           Value: "Development"
@@ -104,7 +104,7 @@ Resources:
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: my-application-load-balancer
+      Name: my-application-load-balancer 
       Subnets:
         - subnet-097008bef419e6c64  # Updated subnet
         - subnet-063f0a66cc67b830a  # Updated subnet
